@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Carlton Urban Assets Map</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  #map { height: 100%; width: 100%; }
+  .info-panel {
+    position: absolute; top: 10px; right: 10px; z-index: 1000;
+    background: white; padding: 10px 14px; border-radius: 6px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.4); font-size: 13px; max-width: 260px;
+  }
+  .legend { line-height: 1.6; }
+  .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 2px; vertical-align: middle; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="info-panel">
+  <strong>Carlton — Pollinator Zones</strong>
+  <div id="status">Loading…</div>
+  <div class="legend">
+    <span style="background:#4a90d9"></span>Turf<br/>
+    <span style="background:#2e7d32; border-radius:50%;"></span>Pollinator tree<br/>
+    <span style="background:#fbc02d; border-radius:50%;"></span>Garden bed<br/>
+    <hr style="margin:6px 0; border:none; border-top:1px solid #ddd;"/>
+    <span style="background:#9e9e9e"></span>Bare Patch<br/>
+    <span style="background:#ffa726"></span>Weak Patch<br/>
+    <span style="background:#9ccc65"></span>Strong Patch<br/>
+    <span style="background:#43a047"></span>Thriving Patch<br/>
+    <span style="opacity:0.6; font-size:11px;">Click any shaded cell for details</span>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.js"></script>
+<script>
+  // 1. Base map centered on Carlton, VIC — Esri World Street Map tiles, no API key required.
+  //    (tile.openstreetmap.org was returning 403 "Access denied" per their usage policy,
+  //    and CARTO's basemap CDN was rejecting browser requests without a registered domain,
+  //    so we use Esri's free World Street Map tiles instead.)
+  const CARLTON_CENTER = [-37.7996, 144.9666];   // [lat, lon]
+  const RADIUS_METRES = 1000;                     // ~1km boundary around Carlton
+  const PAGE_SIZE = 100;                          // API max page size
+
+  const map = L.map('map').setView(CARLTON_CENTER, 16);
+
+  L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, DeLorme, NAVTEQ'
+  }).addTo(map);
+
+  L.circle(CARLTON_CENTER, { radius: RADIUS_METRES, color: '#444', weight: 1, fill: false, dashArray: '4 4' }).addTo(map);
+
+  // 1b. Pollinator zone grid — 100m cells scored on presence of three habitat layers:
+  //     a pollinator-attractive tree, a midstory garden bed, and turf. Equal weight,
+  //     no composite formula — just a plain count of which layers are nearby.
+  const GRID_SIZE_METRES = 100;
+  const METRES_PER_DEG_LAT = 111320;
+  const METRES_PER_DEG_LON = 111320 * Math.cos(CARLTON_CENTER[0] * Math.PI / 180);
+
+  const cellKey = (lat, lon) => {
+    const col = Math.floor(((lon - CARLTON_CENTER[1]) * METRES_PER_DEG_LON) / GRID_SIZE_METRES);
+    const row = Math.floor(((lat - CARLTON_CENTER[0]) * METRES_PER_DEG_LAT) / GRID_SIZE_METRES);
+    return { key: `${col},${row}`, col, row };
+  };
+
+  const cellBounds = (col, row) => {
+    const lonAt = (c) => CARLTON_CENTER[1] + (c * GRID_SIZE_METRES) / METRES_PER_DEG_LON;
+    const latAt = (r) => CARLTON_CENTER[0] + (r * GRID_SIZE_METRES) / METRES_PER_DEG_LAT;
+    return [[latAt(row), lonAt(col)], [latAt(row + 1), lonAt(col + 1)]];
+  };
+
+  const grid = new Map(); // key -> { pollinatorTree, midstory, turf, treePoints, bedPoints }
+  const markCell = (lat, lon, flag) => {
+    const { key } = cellKey(lat, lon);
+    if (!grid.has(key)) grid.set(key, {
+      pollinatorTree: false, midstory: false, turf: false, treePoints: [], bedPoints: []
+    });
+    const cell = grid.get(key);
+    cell[flag] = true;
+    if (flag === 'pollinatorTree') cell.treePoints.push([lat, lon]);
+    if (flag === 'midstory') cell.bedPoints.push([lat, lon]);
+  };
+
+  // A pollinator tree and a midstory garden bed within this distance of each other
+  // count as a tightly co-located pair strong enough on their own to make a patch
+  // Thriving, even without turf nearby.
+  const CLOSE_PAIR_METRES = 50;
+  const hasClosePair = (cell) =>
+    cell.treePoints.some(t => cell.bedPoints.some(b => map.distance(t, b) <= CLOSE_PAIR_METRES));
+
+  // Family-level pollinator value — an MVP heuristic based on general pollination
+  // biology (entomophilous/showy-flowered families vs. wind-pollinated ones), not
+  // a validated per-cultivar Melbourne study. Families not listed default to "low"
+  // and are excluded from the pollinator-tree flag.
+  const POLLINATOR_FAMILIES = new Set([
+    // high value — showy, insect/bird-pollinated
+    'Myrtaceae', 'Malvaceae', 'Rosaceae', 'Fabaceae', 'Leguminosae', 'Proteaceae',
+    'Rutaceae', 'Bignoniaceae', 'Lythraceae', 'Xanthorrhoeaceae',
+    // medium value — insect-pollinated but less prolific forage
+    'Meliaceae', 'Sapindaceae', 'Magnoliaceae', 'Anacardiaceae', 'Lauraceae',
+    'Pittosporaceae', 'Elaeocarpaceae', 'Cornaceae', 'Euphorbiaceae', 'Zamiaceae',
+    'Aquifoliaceae', 'Asparagaceae', 'Salicaceae'
+    // excluded (wind-pollinated / negligible forage): Ulmaceae, Platanaceae, Fagaceae,
+    // Cannabaceae, Oleaceae, Ginkgoaceae, Araucariaceae, Arecaceae, Betulaceae,
+    // Pinaceae, Altingiaceae, Casuarinaceae, Cupressaceae, Podocarpaceae, Moraceae
+  ]);
+  const MIDSTORY_FORMS = new Set(['Shrub', 'Hedge', 'Climber']);
+
+  const ZONE_TIERS = [
+    { name: 'Bare Patch', color: '#9e9e9e', text: 'No pollinator-friendly tree, garden bed, or turf found nearby. This spot currently offers little support for local bees and pollinators — a good candidate for planting.' },
+    { name: 'Weak Patch', color: '#ffa726', text: 'Only one pollinator-friendly layer nearby. A start, but pollinators need more variety of food and shelter to really use this spot.' },
+    { name: 'Strong Patch', color: '#9ccc65', text: 'Two pollinator-friendly layers nearby, giving local bees and pollinators more of what they need to feed and move through the area.' },
+    { name: 'Thriving Patch', color: '#43a047', text: 'All three layers — trees, garden beds, and turf — are present nearby. This is one of the best-supported spots for pollinators in the area.' }
+  ];
+
+  const renderGrid = () => {
+    grid.forEach((flags, key) => {
+      const [col, row] = key.split(',').map(Number);
+      const bounds = cellBounds(col, row);
+      const center = [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2];
+      if (map.distance(CARLTON_CENTER, center) > RADIUS_METRES) return;
+
+      const layerCount = [flags.pollinatorTree, flags.midstory, flags.turf].filter(Boolean).length;
+      const closePair = hasClosePair(flags);
+      const tier = closePair ? ZONE_TIERS[3] : ZONE_TIERS[layerCount];
+
+      const rect = L.rectangle(bounds, {
+        color: tier.color, weight: 1, fillColor: tier.color, fillOpacity: 0.35
+      }).addTo(map);
+      rect.bringToBack(); // keep grid cells beneath tree/garden bed/turf markers
+
+      const overrideNote = closePair
+        ? `<br/><br/><em>Reached Thriving because a pollinator tree and a garden bed sit within ${CLOSE_PAIR_METRES}m of each other here — close enough to function as a mini pollinator stop on their own, even without turf.</em>`
+        : '';
+
+      rect.bindPopup(`
+        <strong>${tier.name}</strong><br/>
+        ${tier.text}${overrideNote}<br/><br/>
+        ${flags.pollinatorTree ? '✅' : '❌'} Pollinator-friendly tree nearby<br/>
+        ${flags.midstory ? '✅' : '❌'} Garden bed / shrub layer nearby<br/>
+        ${flags.turf ? '✅' : '❌'} Turf nearby
+      `);
+    });
+  };
+
+  // 2. Fetch from Melbourne's open data API — no API key required (public Opendatasoft endpoints).
+  const EXPLORE_BASE = 'https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets';
+  const withinCarlton = (geoField) =>
+    `within_distance(${geoField}, geom'POINT(${CARLTON_CENTER[1]} ${CARLTON_CENTER[0]})', ${RADIUS_METRES}m)`;
+
+  const addPolygon = (rec, styleOrFn) => {
+    const feature = rec.json_geometry;
+    if (!feature || !feature.geometry) return;
+
+    const material = rec.surfacematerial || 'Unknown';
+    const style = typeof styleOrFn === 'function' ? styleOrFn(rec) : styleOrFn;
+    const layer = L.geoJSON(feature, { style }).addTo(map);
+
+    layer.bindPopup(`
+      <strong>${rec.roadsegmentdescription || rec.description || 'Road segment'}</strong><br/>
+      Type: ${rec.type || '—'}<br/>
+      Surface: ${material}<br/>
+      Condition rating: ${rec.conditionrating ?? '—'}<br/>
+      Owner: ${rec.ownership || '—'} (${rec.responsibleauthoritycommonname || '—'})
+    `);
+
+    if (rec.geo_point_2d) markCell(rec.geo_point_2d.lat, rec.geo_point_2d.lon, 'turf');
+  };
+
+  // GDA94 / MGA zone 55 (Melbourne's local easting/northing grid) -> WGS84 lat/lon.
+  proj4.defs('EPSG:28355', '+proj=utm +zone=55 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
+
+  const addTree = (rec) => {
+    const geo = rec.geolocation;
+    if (!geo) return;
+    const marker = L.circleMarker([geo.lat, geo.lon], {
+      radius: 4, color: '#1b3d10', weight: 1, fillColor: '#2e7d32', fillOpacity: 0.85
+    }).addTo(map);
+    marker.bindPopup(`
+      <strong>${rec.common_name || 'Tree'}</strong><br/>
+      <em>${rec.scientific_name || ''}</em><br/>
+      Age: ${rec.age_description || '—'} (planted ${rec.year_planted || '—'})<br/>
+      Trunk diameter: ${rec.diameter_breast_height ?? '—'} cm<br/>
+      Located in: ${rec.located_in || '—'} (${rec.precinct || '—'})
+    `);
+
+    if (POLLINATOR_FAMILIES.has(rec.family)) markCell(geo.lat, geo.lon, 'pollinatorTree');
+  };
+
+  // Each garden bed (asset_id) is split across multiple API rows: one "location" row
+  // carrying x_coord/y_coord (with form/botanical_name = 'NA'), and one row per plant
+  // species actually growing in that bed (with a real form, but no coordinates). So we
+  // collect all rows per asset_id first, then render one marker per bed once every row
+  // for it has arrived.
+  const gardenBeds = new Map(); // asset_id -> { coord, forms: Set, species: Set, ...meta }
+
+  const collectGardenBedRow = (rec) => {
+    const id = rec.asset_id;
+    if (!gardenBeds.has(id)) gardenBeds.set(id, {
+      coord: null, forms: new Set(), species: new Set(),
+      bedType: rec.assessed_bed_type, origin: rec.bed_type_origin,
+      condition: rec.overall_condition_rating, area: rec.area_m2, site: rec.site
+    });
+    const bed = gardenBeds.get(id);
+    const x = parseFloat(rec.x_coord), y = parseFloat(rec.y_coord);
+    if (isFinite(x) && isFinite(y)) bed.coord = [x, y];
+    if (rec.form && rec.form !== 'NA') bed.forms.add(rec.form);
+    if (rec.botanical_name && rec.botanical_name !== 'NA') bed.species.add(rec.botanical_name);
+    // Later rows for the same bed may carry meta fields the location row lacked.
+    bed.bedType = bed.bedType || rec.assessed_bed_type;
+    bed.condition = bed.condition || rec.overall_condition_rating;
+    bed.site = bed.site || rec.site;
+  };
+
+  const renderGardenBeds = () => {
+    let rendered = 0;
+    gardenBeds.forEach((bed) => {
+      if (!bed.coord) return; // bed has no location row in Carlton's radius query
+      const [lon, lat] = proj4('EPSG:28355', 'WGS84', bed.coord);
+      const marker = L.circleMarker([lat, lon], {
+        radius: 4, color: '#a17f00', weight: 1, fillColor: '#fbc02d', fillOpacity: 0.85
+      }).addTo(map);
+      const speciesList = [...bed.species].join(', ') || 'species not recorded';
+      marker.bindPopup(`
+        <strong>${bed.bedType || 'Garden bed'}</strong><br/>
+        <em>${speciesList}</em><br/>
+        Condition: ${bed.condition || '—'}<br/>
+        Area: ${bed.area || '—'} m² · Site: ${bed.site || '—'}
+      `);
+
+      if ([...bed.forms].some(f => MIDSTORY_FORMS.has(f))) markCell(lat, lon, 'midstory');
+      rendered++;
+    });
+    return rendered;
+  };
+
+  const statusEl = document.getElementById('status');
+  const layerCounts = {};
+
+  const updateStatus = () => {
+    const labels = { turf: 'turf', trees: 'trees', 'gardenbed rows': 'garden bed rows', 'garden beds': 'garden beds' };
+    const parts = Object.keys(layerCounts)
+      .filter(k => layerCounts[k])
+      .map(k => `${layerCounts[k].loaded}/${layerCounts[k].total} ${labels[k]}`);
+    statusEl.textContent = `${parts.join(' · ')} (Carlton, ${RADIUS_METRES}m radius)`;
+  };
+
+  // Generic paginated fetch against any Explore API v2.1 dataset.
+  const fetchAll = (dataset, where, key, renderFn, maxRecords = Infinity) => {
+    const step = (offset, loaded, total) => {
+      const url = `${EXPLORE_BASE}/${dataset}/records?limit=${PAGE_SIZE}&offset=${offset}&where=${encodeURIComponent(where)}`;
+      return fetch(url)
+        .then(res => {
+          if (!res.ok) throw new Error(`${dataset}: HTTP ${res.status}`);
+          return res.json();
+        })
+        .then(data => {
+          total = data.total_count;
+          const records = data.results || [];
+          records.forEach(renderFn);
+          loaded += records.length;
+          layerCounts[key] = { loaded, total };
+          updateStatus();
+
+          const nextOffset = offset + PAGE_SIZE;
+          if (records.length === PAGE_SIZE && loaded < total && loaded < maxRecords) {
+            return step(nextOffset, loaded, total);
+          }
+        });
+    };
+    return step(0, 0, 0);
+  };
+
+  Promise.all([
+    // Only Turf-surfaced segments, in blue (all other surface types removed).
+    fetchAll('road-segments-with-surface-type', `surfacematerial='Turf' and ${withinCarlton('geo_point_2d')}`,
+      'turf', (rec) => addPolygon(rec, { color: '#1a4d8f', weight: 1, fillColor: '#4a90d9', fillOpacity: 0.5 })),
+    // Urban forest trees, as points.
+    fetchAll('trees-with-species-and-dimensions-urban-forest', withinCarlton('geolocation'),
+      'trees', addTree),
+    // Garden beds: fetch every row for Carlton (not just ones with coordinates) since
+    // a bed's location and its planted species live on different rows joined by asset_id.
+    fetchAll('renewals-for-nature-city-of-melbourne-garden-bed-inventory-2024',
+      `neighbourhood='Carlton'`, 'gardenbed rows', collectGardenBedRow)
+  ]).then(() => {
+    const bedCount = renderGardenBeds();
+    layerCounts['garden beds'] = { loaded: bedCount, total: bedCount };
+    updateStatus();
+    renderGrid();
+  }).catch(err => {
+    statusEl.textContent = 'Failed to load: ' + err.message;
+    console.error(err);
+  });
+</script>
+
+</body>
+</html>
