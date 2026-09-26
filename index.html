@@ -3,51 +3,329 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Carlton Urban Assets Map</title>
+<title>Habitune — Corridor View (Carlton prototype)</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
-  html, body { height: 100%; margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-  #map { height: 100%; width: 100%; }
-  .info-panel {
-    position: absolute; top: 10px; right: 10px; z-index: 1000;
-    background: white; padding: 10px 14px; border-radius: 6px;
-    box-shadow: 0 1px 5px rgba(0,0,0,0.4); font-size: 13px; max-width: 260px;
+  :root {
+    --ink: #1f2a1f;
+    --muted: #5c6b5c;
+    --line: #e1e6df;
+    --panel-bg: #ffffff;
+    --brand: #2e7d32;
+    --brand-soft: #eaf3ea;
   }
-  .legend { line-height: 1.6; }
-  .legend span { display: inline-block; width: 12px; height: 12px; margin-right: 6px; border-radius: 2px; vertical-align: middle; }
+  * { box-sizing: border-box; }
+  html, body {
+    height: 100%; margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    color: var(--ink);
+  }
+  body { display: flex; flex-direction: column; }
+
+  /* ---------- Top nav ---------- */
+  .nav {
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 18px; background: #fff; border-bottom: 1px solid var(--line);
+    z-index: 1200; position: relative;
+  }
+  .nav .brand { font-weight: 700; font-size: 16px; display: flex; align-items: center; gap: 6px; }
+
+  .nav-tabs { display: flex; gap: 4px; margin-left: 18px; background: #f1f4ef; border-radius: 999px; padding: 3px; }
+  .address-bar .nav-tabs { margin-left: 0; flex: 0 0 auto; }
+  .nav-tab {
+    border: none; background: transparent; cursor: pointer;
+    font-size: 13px; font-weight: 600; color: var(--muted);
+    padding: 6px 16px; border-radius: 999px; font-family: inherit;
+  }
+  .nav-tab:hover { color: var(--ink); }
+  .nav-tab.active { background: var(--brand); color: #fff; }
+
+  /* ---------- Address bar ---------- */
+  .address-bar {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 12px 18px; background: #fff; border-bottom: 1px solid var(--line);
+    position: relative; z-index: 1150;
+  }
+  .address-search-wrap { flex: 1 1 260px; min-width: 220px; max-width: 440px; }
+  .address-search { position: relative; }
+  .address-search .icon {
+    position: absolute; left: 13px; top: 50%; transform: translateY(-50%);
+    font-size: 14px; opacity: .6; pointer-events: none;
+  }
+  .address-search input {
+    width: 100%; font: inherit; font-size: 14px;
+    padding: 11px 14px 11px 36px; border-radius: 10px;
+    border: 1.5px solid var(--line); outline: none; color: var(--ink);
+  }
+  .address-search input:focus { border-color: var(--brand); }
+  .address-suggestions {
+    position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+    background: #fff; border: 1px solid var(--line); border-radius: 10px;
+    box-shadow: 0 6px 18px rgba(0,0,0,0.10); overflow: hidden; z-index: 1160;
+  }
+  .address-suggestions .suggestion {
+    padding: 9px 14px; font-size: 13.5px; cursor: pointer;
+  }
+  .address-suggestions .suggestion:hover { background: var(--brand-soft); }
+  .address-suggestions .suggestion + .suggestion { border-top: 1px solid var(--line); }
+
+  .address-selected { display: flex; align-items: center; gap: 10px; }
+  .address-selected .pin { font-size: 18px; }
+  .address-selected .address-name { font-size: 17px; font-weight: 700; color: var(--ink); }
+  .address-selected .change-location {
+    border: none; background: none; cursor: pointer; font-family: inherit;
+    font-size: 12.5px; font-weight: 600; color: var(--brand); text-decoration: underline;
+    padding: 4px 2px; margin-left: 2px;
+  }
+  .address-selected .change-location:hover { color: #1b5e20; }
+
+  /* ---------- Precinct View placeholder ---------- */
+  .precinct-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; background: #fbfcf9; }
+  .precinct-placeholder.hidden { display: none; }
+  .precinct-placeholder .card { max-width: 360px; text-align: center; padding: 30px; }
+  .precinct-placeholder .card .big-icon { font-size: 30px; margin-bottom: 10px; }
+  .precinct-placeholder .card h2 { margin: 0 0 8px; font-size: 18px; }
+  .precinct-placeholder .card p { margin: 0; color: var(--muted); font-size: 13.5px; line-height: 1.5; }
+
+  #streetViewRoot { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  #streetViewRoot.hidden { display: none; }
+  #exploreRoot { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+
+  /* ---------- Tile bar ---------- */
+  .tile-bar {
+    display: flex; gap: 10px; padding: 12px 18px;
+    background: #fbfcf9; border-bottom: 1px solid var(--line);
+    overflow-x: auto; z-index: 1100; position: relative;
+  }
+  .tile {
+    flex: 1 1 0; min-width: 168px;
+    display: flex; flex-direction: column; gap: 3px;
+    text-align: left; cursor: pointer;
+    background: #fff; border: 1.5px solid var(--line); border-radius: 12px;
+    padding: 10px 12px; transition: border-color .15s, background .15s, transform .1s;
+  }
+  .tile:hover { border-color: #bcd4bc; transform: translateY(-1px); }
+  .tile.active { border-color: var(--brand); background: var(--brand-soft); }
+  .tile .tile-top { display: flex; align-items: center; gap: 8px; }
+  .tile .tile-icon { font-size: 18px; line-height: 1; }
+  .tile .tile-title { font-weight: 600; font-size: 13.5px; }
+  .tile .tile-sub { font-size: 11.5px; color: var(--muted); line-height: 1.35; }
+  .tile.active .tile-title { color: var(--brand); }
+  .tile .tile-status {
+    font-size: 10px; font-weight: 600; letter-spacing: .02em; text-transform: uppercase;
+    color: #a3a3a3; margin-top: 1px;
+  }
+  .tile.active .tile-status { color: var(--brand); }
+
+  /* ---------- Map area ---------- */
+  .map-wrap { position: relative; flex: 1; min-height: 0; }
+  #map { height: 100%; width: 100%; }
+
+  /* ---------- First-load prompt ---------- */
+  .nudge {
+    position: absolute; top: 16px; left: 50%; transform: translateX(-50%);
+    background: #fff; border: 1px solid var(--line); border-radius: 999px;
+    padding: 9px 18px; font-size: 13px; font-weight: 500;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08); z-index: 900;
+    display: flex; align-items: center; gap: 8px;
+    animation: nudge-pulse 1.8s ease-in-out infinite;
+  }
+  .nudge .arrow { animation: nudge-bounce 1.2s ease-in-out infinite; }
+  @keyframes nudge-pulse { 0%,100% { box-shadow: 0 2px 10px rgba(46,125,50,0.10); } 50% { box-shadow: 0 2px 16px rgba(46,125,50,0.28); } }
+  @keyframes nudge-bounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
+  .nudge.hidden { display: none; }
+
+  /* ---------- Loading pill ---------- */
+  .loading-pill {
+    position: absolute; top: 14px; right: 14px; z-index: 900;
+    background: rgba(255,255,255,0.95); border: 1px solid var(--line); border-radius: 8px;
+    padding: 6px 10px; font-size: 11.5px; color: var(--muted);
+  }
+  .loading-pill.hidden { display: none; }
+
+  /* ---------- Legend / detail panel ---------- */
+  .legend-panel {
+    position: absolute; left: 14px; top: 14px; z-index: 900;
+    background: var(--panel-bg); border: 1px solid var(--line); border-radius: 12px;
+    padding: 6px 16px; font-size: 12.5px; max-width: 300px; max-height: min(50vh, 400px);
+    overflow-y: auto;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    display: none;
+  }
+  .legend-panel.visible { display: block; }
+  .legend-section { padding: 10px 0; }
+  .legend-section + .legend-section { border-top: 1px solid var(--line); }
+  .legend-panel h3 { margin: 0 0 4px; font-size: 14px; }
+  .legend-panel p { margin: 0 0 10px; color: var(--muted); line-height: 1.45; }
+  .legend-row { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
+  .legend-swatch { width: 11px; height: 11px; border-radius: 50%; flex-shrink: 0; }
+  .legend-swatch.square { border-radius: 3px; }
+  .legend-note { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--line); color: #8a8a8a; font-size: 11px; line-height: 1.4; }
+
+  /* ---------- Empty state ---------- */
+  .empty-state {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    pointer-events: none; z-index: 400;
+  }
+  .empty-state.hidden { display: none; }
+  .empty-state .card {
+    background: rgba(255,255,255,0.85); border-radius: 16px; padding: 18px 26px;
+    text-align: center; color: #94a294; font-size: 13px; max-width: 260px;
+  }
+
+  /* ---------- Species card strip ---------- */
+  .species-strip {
+    position: absolute; left: 14px; right: 14px; bottom: 14px; z-index: 900;
+    display: none; gap: 10px; overflow-x: auto; padding: 4px 2px;
+  }
+  .species-strip.visible { display: flex; }
+  .species-card {
+    flex: 0 0 148px; cursor: pointer;
+    background: var(--panel-bg); border: 1.5px solid var(--line); border-radius: 12px;
+    overflow: hidden; box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    transition: border-color .15s, transform .1s;
+  }
+  .species-card:hover { transform: translateY(-2px); }
+  .species-card.selected { border-color: #ff2f92; box-shadow: 0 0 0 2px rgba(255,47,146,0.25); }
+  .species-card .thumb {
+    width: 100%; height: 84px; background: var(--brand-soft);
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+  }
+  .species-card .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .species-card .thumb .thumb-fallback { font-size: 26px; opacity: .55; }
+  .species-card .body { padding: 8px 10px; }
+  .species-card .common-name { font-size: 12.5px; font-weight: 700; line-height: 1.25; }
+  .species-card .sci-name { font-size: 10.5px; font-style: italic; color: var(--muted); margin-top: 1px; }
+  .species-card .count-badge { font-size: 10px; color: #a3a3a3; margin-top: 3px; }
+
+  /* ---------- Species detail drawer ---------- */
+  .species-detail {
+    position: absolute; top: 14px; right: 14px; z-index: 950;
+    width: 300px; max-height: calc(100% - 100px); overflow-y: auto;
+    background: var(--panel-bg); border: 1px solid var(--line); border-radius: 14px;
+    box-shadow: 0 4px 18px rgba(0,0,0,0.14);
+    display: none;
+  }
+  .species-detail.visible { display: block; }
+  .species-detail .detail-close {
+    position: absolute; top: 8px; right: 8px; width: 24px; height: 24px; border-radius: 50%;
+    border: none; background: rgba(0,0,0,0.06); cursor: pointer; font-size: 13px; line-height: 1;
+    color: var(--ink);
+  }
+  .species-detail .detail-image { width: 100%; height: 130px; object-fit: cover; display: block; background: var(--brand-soft); }
+  .species-detail .detail-body { padding: 14px 16px 16px; }
+  .species-detail .detail-common { font-size: 16px; font-weight: 700; }
+  .species-detail .detail-sci { font-size: 12.5px; font-style: italic; color: var(--muted); margin-bottom: 12px; }
+  .species-detail .detail-block { margin-bottom: 12px; }
+  .species-detail .detail-block h4 {
+    margin: 0 0 4px; font-size: 11.5px; text-transform: uppercase; letter-spacing: .03em;
+    color: var(--brand);
+  }
+  .species-detail .detail-block p { margin: 0; font-size: 12.5px; line-height: 1.5; color: var(--ink); }
+  .species-detail .detail-block.drop h4 { color: #c0392b; }
+  .species-detail .prototype-tag {
+    margin-top: 4px; padding-top: 10px; border-top: 1px dashed var(--line);
+    font-size: 10.5px; color: #a3a3a3; line-height: 1.4;
+  }
+
+  /* ---------- "You" street marker ---------- */
+  .you-pin {
+    position: relative;
+    background: #2e2e2e; color: #fff; font-size: 11px; font-weight: 700;
+    padding: 4px 11px; border-radius: 999px; white-space: nowrap;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  }
+  .you-pin::after {
+    content: ''; position: absolute; left: 50%; bottom: -5px; transform: translateX(-50%);
+    border-left: 5px solid transparent; border-right: 5px solid transparent; border-top: 5px solid #2e2e2e;
+  }
+
+  #exploreRoot.hidden { display: none; }
 </style>
 </head>
 <body>
 
-<div id="map"></div>
-<div class="info-panel">
-  <strong>Carlton — Pollinator Zones</strong>
-  <div id="status">Loading…</div>
-  <div class="legend">
-    <span style="background:#4a90d9"></span>Turf<br/>
-    <span style="background:#2e7d32; border-radius:50%;"></span>Pollinator tree<br/>
-    <span style="background:#fbc02d; border-radius:50%;"></span>Garden bed<br/>
-    <hr style="margin:6px 0; border:none; border-top:1px solid #ddd;"/>
-    <span style="background:#9e9e9e"></span>Bare Patch<br/>
-    <span style="background:#ffa726"></span>Weak Patch<br/>
-    <span style="background:#9ccc65"></span>Strong Patch<br/>
-    <span style="background:#43a047"></span>Thriving Patch<br/>
-    <span style="opacity:0.6; font-size:11px;">Click any shaded cell for details</span>
+<div class="nav">
+  <div class="brand">🌿 Habitune</div>
+  <div class="nav-tabs" id="topNavTabs">
+    <button class="nav-tab active" data-top="explore">Explore</button>
+    <button class="nav-tab" data-top="contribute">Contribute</button>
+  </div>
+</div>
+
+<div id="exploreRoot">
+
+  <div class="address-bar">
+    <div class="address-search-wrap" id="addressSearchWrap">
+      <!-- search box or selected-address display injected by JS -->
+    </div>
+    <div class="nav-tabs" id="viewTabs">
+      <button class="nav-tab" data-view="precinct">Precinct View</button>
+      <button class="nav-tab active" data-view="street">Street View</button>
+    </div>
+  </div>
+
+  <div id="streetViewRoot">
+
+    <div class="tile-bar" id="tileBar">
+      <!-- tiles injected by JS -->
+    </div>
+
+    <div class="map-wrap">
+      <div id="map"></div>
+
+      <div class="nudge" id="nudge">
+        <span class="arrow">👆</span>
+        <span>Choose a category above to explore your local pollinator network</span>
+      </div>
+
+      <div class="loading-pill" id="loadingPill">Loading local data…</div>
+
+      <div class="empty-state hidden" id="emptyState">
+        <div class="card">Select a category above — trees, animals, corridor health, or zones — to load it onto the map.</div>
+      </div>
+
+      <div class="legend-panel" id="legendPanel"></div>
+
+      <div class="species-detail" id="speciesDetail"></div>
+
+      <div class="species-strip" id="speciesStrip"></div>
+    </div>
+
+  </div>
+
+  <div class="precinct-placeholder hidden" id="precinctViewRoot">
+    <div class="card">
+      <div class="big-icon">🗺️</div>
+      <h2>Precinct View</h2>
+      <p>This wider-area view isn't built in this prototype yet. This session's redesign work is focused on Street View above.</p>
+    </div>
+  </div>
+
+</div>
+
+<div class="precinct-placeholder hidden" id="contributeRoot">
+  <div class="card">
+    <div class="big-icon">🌱</div>
+    <h2>Contribute</h2>
+    <p>Ways for residents to contribute isn't built in this prototype yet. This session's redesign work is focused on Explore.</p>
   </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/proj4js/2.9.2/proj4.js"></script>
 <script>
-  // 1. Base map centered on Carlton, VIC — Esri World Street Map tiles, no API key required.
-  //    (tile.openstreetmap.org was returning 403 "Access denied" per their usage policy,
-  //    and CARTO's basemap CDN was rejecting browser requests without a registered domain,
-  //    so we use Esri's free World Street Map tiles instead.)
-  const CARLTON_CENTER = [-37.7996, 144.9666];   // [lat, lon]
-  const RADIUS_METRES = 1000;                     // ~1km boundary around Carlton
-  const PAGE_SIZE = 100;                          // API max page size
+(function () {
+  // =========================================================================
+  // 1. Base map
+  // =========================================================================
+  const CARLTON_CENTER = [-37.7996, 144.9666];
+  const RADIUS_METRES = 1000;
+  const PAGE_SIZE = 100;
+  const METRES_PER_DEG_LAT = 111320;
+  const METRES_PER_DEG_LON = 111320 * Math.cos(CARLTON_CENTER[0] * Math.PI / 180);
 
-  const map = L.map('map').setView(CARLTON_CENTER, 16);
+  const map = L.map('map', { zoomControl: true }).setView(CARLTON_CENTER, 16);
 
   L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', {
     maxZoom: 19,
@@ -56,70 +334,202 @@
 
   L.circle(CARLTON_CENTER, { radius: RADIUS_METRES, color: '#444', weight: 1, fill: false, dashArray: '4 4' }).addTo(map);
 
-  // 1b. Pollinator zone grid — 100m cells scored on presence of three habitat layers:
-  //     a pollinator-attractive tree, a midstory garden bed, and turf. Equal weight,
-  //     no composite formula — just a plain count of which layers are nearby.
+  // =========================================================================
+  // 1b. Top nav — Explore / Contribute. Contribute has no build behind it
+  //    yet; it's a scoped placeholder, same spirit as Precinct View and the
+  //    Pollinating Animals tile.
+  // =========================================================================
+  document.querySelectorAll('#topNavTabs .nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#topNavTabs .nav-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const isContribute = tab.dataset.top === 'contribute';
+      document.getElementById('exploreRoot').classList.toggle('hidden', isContribute);
+      document.getElementById('contributeRoot').classList.toggle('hidden', !isContribute);
+      if (!isContribute) map.invalidateSize();
+    });
+  });
+
+  // Precinct View / Street View — lives in the same tile as the address bar.
+  document.querySelectorAll('#viewTabs .nav-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#viewTabs .nav-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      const isPrecinct = tab.dataset.view === 'precinct';
+      document.getElementById('streetViewRoot').classList.toggle('hidden', isPrecinct);
+      document.getElementById('precinctViewRoot').classList.toggle('hidden', !isPrecinct);
+      if (!isPrecinct) map.invalidateSize();
+    });
+  });
+
+  // =========================================================================
+  // 1c. "You" street marker — always on, on every screen and every tile
+  //    selection. This prototype has no address-to-street geometry (that
+  //    lives on the main build), so the highlighted street is a proxy: a
+  //    straight segment through a deterministic point, standing in for
+  //    "your street" until the real geocoder/street geometry is wired up.
+  // =========================================================================
+  const hashString = (str) => {
+    let h = 0;
+    for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return Math.abs(h);
+  };
+
+  const addressPoint = (name) => {
+    const h = hashString(name);
+    const bearing = (h % 360) * Math.PI / 180;
+    const dist = 80 + (h % 400); // 80–480m from centre, deterministic per name
+    const dLat = (dist * Math.cos(bearing)) / METRES_PER_DEG_LAT;
+    const dLon = (dist * Math.sin(bearing)) / METRES_PER_DEG_LON;
+    return [CARLTON_CENTER[0] + dLat, CARLTON_CENTER[1] + dLon];
+  };
+
+  const STREET_HALF_LENGTH_M = 65;
+  let userStreetLayer = null;
+
+  const drawUserStreet = (center, bearingRad) => {
+    if (userStreetLayer) map.removeLayer(userStreetLayer);
+    const dLat = (STREET_HALF_LENGTH_M * Math.cos(bearingRad)) / METRES_PER_DEG_LAT;
+    const dLon = (STREET_HALF_LENGTH_M * Math.sin(bearingRad)) / METRES_PER_DEG_LON;
+    const p1 = [center[0] - dLat, center[1] - dLon];
+    const p2 = [center[0] + dLat, center[1] + dLon];
+    const line = L.polyline([p1, p2], { color: '#9a9a9a', weight: 7, opacity: 0.65, lineCap: 'round' });
+    const marker = L.marker(center, {
+      icon: L.divIcon({ className: 'you-marker', html: '<div class="you-pin">You</div>', iconSize: [40, 30], iconAnchor: [20, 30] }),
+      zIndexOffset: 1000
+    });
+    userStreetLayer = L.layerGroup([line, marker]).addTo(map);
+  };
+
+  // Default proxy street, visible immediately — before any address is searched.
+  drawUserStreet(CARLTON_CENTER, (28 * Math.PI) / 180);
+
+  // =========================================================================
+  // 1d. Address bar — search + edit. Selecting a street moves the "You"
+  //    street marker above to a deterministic point standing in for that
+  //    address, since this prototype has no real geocoder behind it.
+  // =========================================================================
+  const CARLTON_STREETS = [
+    'Lygon Street', 'Rathdowne Street', 'Drummond Street', 'Canning Street',
+    'Nicholson Street', 'Elgin Street', 'Faraday Street', 'Pelham Street',
+    'Grattan Street', 'Bouverie Street', 'Amess Street', 'Fenwick Street',
+    'Neill Street', 'Station Street', 'Palmerston Street', 'Rathdowne Place'
+  ];
+
+  const addressSearchWrap = document.getElementById('addressSearchWrap');
+  let selectedAddress = null;
+
+  const renderAddressBar = () => {
+    if (!selectedAddress) {
+      addressSearchWrap.innerHTML = `
+        <div class="address-search">
+          <span class="icon">🔍</span>
+          <input type="text" id="addressInput" placeholder="Search for a Melbourne street" autocomplete="off" />
+        </div>
+      `;
+      const input = document.getElementById('addressInput');
+      input.focus();
+      input.addEventListener('input', () => showSuggestions(input.value));
+      input.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        const q = input.value.trim();
+        if (!q) return;
+        const match = CARLTON_STREETS.find(s => s.toLowerCase() === q.toLowerCase())
+          || CARLTON_STREETS.find(s => s.toLowerCase().startsWith(q.toLowerCase()))
+          || q;
+        selectAddress(match);
+      });
+    } else {
+      addressSearchWrap.innerHTML = `
+        <div class="address-selected">
+          <span class="pin">📍</span>
+          <span class="address-name">${selectedAddress}</span>
+          <button class="change-location" id="changeLocationBtn">Change location</button>
+        </div>
+      `;
+      document.getElementById('changeLocationBtn').addEventListener('click', () => {
+        selectedAddress = null;
+        renderAddressBar();
+      });
+    }
+  };
+
+  const showSuggestions = (query) => {
+    const existing = document.querySelector('.address-suggestions');
+    if (existing) existing.remove();
+    if (!query.trim()) return;
+    const matches = CARLTON_STREETS.filter(s => s.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 6);
+    if (matches.length === 0) return;
+    const box = document.createElement('div');
+    box.className = 'address-suggestions';
+    box.innerHTML = matches.map(m => `<div class="suggestion">${m}</div>`).join('');
+    box.querySelectorAll('.suggestion').forEach((el, i) => {
+      el.addEventListener('click', () => selectAddress(matches[i]));
+    });
+    document.querySelector('.address-search').appendChild(box);
+  };
+
+  function selectAddress(name) {
+    selectedAddress = name;
+    const point = addressPoint(name);
+    const bearing = ((hashString(name) % 180) * Math.PI) / 180;
+    drawUserStreet(point, bearing);
+    map.panTo(point);
+    renderAddressBar();
+  }
+
+  renderAddressBar();
+
+  // =========================================================================
+  // 2. Pollinator zone grid (100m cells) — unchanged scoring logic, now
+  //    rendered into a layer group instead of straight onto the map.
+  // =========================================================================
   const GRID_SIZE_METRES = 100;
-  const METRES_PER_DEG_LAT = 111320;
-  const METRES_PER_DEG_LON = 111320 * Math.cos(CARLTON_CENTER[0] * Math.PI / 180);
 
   const cellKey = (lat, lon) => {
     const col = Math.floor(((lon - CARLTON_CENTER[1]) * METRES_PER_DEG_LON) / GRID_SIZE_METRES);
     const row = Math.floor(((lat - CARLTON_CENTER[0]) * METRES_PER_DEG_LAT) / GRID_SIZE_METRES);
     return { key: `${col},${row}`, col, row };
   };
-
   const cellBounds = (col, row) => {
     const lonAt = (c) => CARLTON_CENTER[1] + (c * GRID_SIZE_METRES) / METRES_PER_DEG_LON;
     const latAt = (r) => CARLTON_CENTER[0] + (r * GRID_SIZE_METRES) / METRES_PER_DEG_LAT;
     return [[latAt(row), lonAt(col)], [latAt(row + 1), lonAt(col + 1)]];
   };
 
-  const grid = new Map(); // key -> { pollinatorTree, midstory, turf, treePoints, bedPoints }
+  const grid = new Map();
   const markCell = (lat, lon, flag) => {
     const { key } = cellKey(lat, lon);
-    if (!grid.has(key)) grid.set(key, {
-      pollinatorTree: false, midstory: false, turf: false, treePoints: [], bedPoints: []
-    });
+    if (!grid.has(key)) grid.set(key, { pollinatorTree: false, midstory: false, turf: false, treePoints: [], bedPoints: [] });
     const cell = grid.get(key);
     cell[flag] = true;
     if (flag === 'pollinatorTree') cell.treePoints.push([lat, lon]);
     if (flag === 'midstory') cell.bedPoints.push([lat, lon]);
   };
 
-  // A pollinator tree and a midstory garden bed within this distance of each other
-  // count as a tightly co-located pair strong enough on their own to make a patch
-  // Thriving, even without turf nearby.
   const CLOSE_PAIR_METRES = 50;
   const hasClosePair = (cell) =>
     cell.treePoints.some(t => cell.bedPoints.some(b => map.distance(t, b) <= CLOSE_PAIR_METRES));
 
-  // Family-level pollinator value — an MVP heuristic based on general pollination
-  // biology (entomophilous/showy-flowered families vs. wind-pollinated ones), not
-  // a validated per-cultivar Melbourne study. Families not listed default to "low"
-  // and are excluded from the pollinator-tree flag.
   const POLLINATOR_FAMILIES = new Set([
-    // high value — showy, insect/bird-pollinated
     'Myrtaceae', 'Malvaceae', 'Rosaceae', 'Fabaceae', 'Leguminosae', 'Proteaceae',
     'Rutaceae', 'Bignoniaceae', 'Lythraceae', 'Xanthorrhoeaceae',
-    // medium value — insect-pollinated but less prolific forage
     'Meliaceae', 'Sapindaceae', 'Magnoliaceae', 'Anacardiaceae', 'Lauraceae',
     'Pittosporaceae', 'Elaeocarpaceae', 'Cornaceae', 'Euphorbiaceae', 'Zamiaceae',
     'Aquifoliaceae', 'Asparagaceae', 'Salicaceae'
-    // excluded (wind-pollinated / negligible forage): Ulmaceae, Platanaceae, Fagaceae,
-    // Cannabaceae, Oleaceae, Ginkgoaceae, Araucariaceae, Arecaceae, Betulaceae,
-    // Pinaceae, Altingiaceae, Casuarinaceae, Cupressaceae, Podocarpaceae, Moraceae
   ]);
   const MIDSTORY_FORMS = new Set(['Shrub', 'Hedge', 'Climber']);
 
   const ZONE_TIERS = [
-    { name: 'Bare Patch', color: '#9e9e9e', text: 'No pollinator-friendly tree, garden bed, or turf found nearby. This spot currently offers little support for local bees and pollinators — a good candidate for planting.' },
-    { name: 'Weak Patch', color: '#ffa726', text: 'Only one pollinator-friendly layer nearby. A start, but pollinators need more variety of food and shelter to really use this spot.' },
-    { name: 'Strong Patch', color: '#9ccc65', text: 'Two pollinator-friendly layers nearby, giving local bees and pollinators more of what they need to feed and move through the area.' },
-    { name: 'Thriving Patch', color: '#43a047', text: 'All three layers — trees, garden beds, and turf — are present nearby. This is one of the best-supported spots for pollinators in the area.' }
+    { name: 'Bare Patch', color: '#9e9e9e', text: 'No pollinator-friendly tree, garden bed, or turf found nearby — a good candidate for planting.' },
+    { name: 'Weak Patch', color: '#ffa726', text: 'Only one pollinator-friendly layer nearby. A start, but pollinators need more variety to really use this spot.' },
+    { name: 'Strong Patch', color: '#9ccc65', text: 'Two pollinator-friendly layers nearby, giving local bees and pollinators more of what they need.' },
+    { name: 'Thriving Patch', color: '#43a047', text: 'Trees, garden beds, and turf are all present nearby — one of the best-supported spots for pollinators in the area.' }
   ];
 
-  const renderGrid = () => {
+  const zoneLayerGroup = L.layerGroup();
+  const renderZoneGrid = () => {
+    zoneLayerGroup.clearLayers();
     grid.forEach((flags, key) => {
       const [col, row] = key.split(',').map(Number);
       const bounds = cellBounds(col, row);
@@ -127,105 +537,113 @@
       if (map.distance(CARLTON_CENTER, center) > RADIUS_METRES) return;
 
       const layerCount = [flags.pollinatorTree, flags.midstory, flags.turf].filter(Boolean).length;
-      const closePair = hasClosePair(flags);
-      const tier = closePair ? ZONE_TIERS[3] : ZONE_TIERS[layerCount];
+      const tier = hasClosePair(flags) ? ZONE_TIERS[3] : ZONE_TIERS[layerCount];
 
-      const rect = L.rectangle(bounds, {
-        color: tier.color, weight: 1, fillColor: tier.color, fillOpacity: 0.35
-      }).addTo(map);
-      rect.bringToBack(); // keep grid cells beneath tree/garden bed/turf markers
-
-      const overrideNote = closePair
-        ? `<br/><br/><em>Reached Thriving because a pollinator tree and a garden bed sit within ${CLOSE_PAIR_METRES}m of each other here — close enough to function as a mini pollinator stop on their own, even without turf.</em>`
-        : '';
-
+      const rect = L.rectangle(bounds, { color: tier.color, weight: 1, fillColor: tier.color, fillOpacity: 0.38 });
       rect.bindPopup(`
-        <strong>${tier.name}</strong><br/>
-        ${tier.text}${overrideNote}<br/><br/>
+        <strong>${tier.name}</strong><br/>${tier.text}<br/><br/>
         ${flags.pollinatorTree ? '✅' : '❌'} Pollinator-friendly tree nearby<br/>
         ${flags.midstory ? '✅' : '❌'} Garden bed / shrub layer nearby<br/>
         ${flags.turf ? '✅' : '❌'} Turf nearby
       `);
+      zoneLayerGroup.addLayer(rect);
     });
   };
 
-  // 2. Fetch from Melbourne's open data API — no API key required (public Opendatasoft endpoints).
+  // =========================================================================
+  // 3. Data fetch — trees, garden beds, turf (unchanged sources/logic),
+  //    now populating layer groups + a plain array (pollinator trees) for
+  //    reuse by the Corridor Health mode.
+  // =========================================================================
   const EXPLORE_BASE = 'https://data.melbourne.vic.gov.au/api/explore/v2.1/catalog/datasets';
   const withinCarlton = (geoField) =>
     `within_distance(${geoField}, geom'POINT(${CARLTON_CENTER[1]} ${CARLTON_CENTER[0]})', ${RADIUS_METRES}m)`;
 
-  const addPolygon = (rec, styleOrFn) => {
+  const turfLayerGroup = L.layerGroup();
+  const treeLayerGroup = L.layerGroup();
+  const bedLayerGroup = L.layerGroup();
+
+  const pollinatingTreePoints = []; // { lat, lon, name }
+
+  // scientific name -> { commonName, scientificName, family, count, markers: [] }
+  // Powers the species cards + the pink "select a species" highlight in the
+  // Pollinating Plants & Trees mode.
+  const speciesIndex = new Map();
+  const DEFAULT_POLLINATING_FILL = '#2e7d32';
+  const DEFAULT_NONPOLLINATING_FILL = '#8d6e63';
+  const SPECIES_HIGHLIGHT_FILL = '#ff2f92';
+
+  const addTurfSegment = (rec) => {
     const feature = rec.json_geometry;
     if (!feature || !feature.geometry) return;
-
-    const material = rec.surfacematerial || 'Unknown';
-    const style = typeof styleOrFn === 'function' ? styleOrFn(rec) : styleOrFn;
-    const layer = L.geoJSON(feature, { style }).addTo(map);
-
-    layer.bindPopup(`
-      <strong>${rec.roadsegmentdescription || rec.description || 'Road segment'}</strong><br/>
-      Type: ${rec.type || '—'}<br/>
-      Surface: ${material}<br/>
-      Condition rating: ${rec.conditionrating ?? '—'}<br/>
-      Owner: ${rec.ownership || '—'} (${rec.responsibleauthoritycommonname || '—'})
-    `);
-
+    const layer = L.geoJSON(feature, { style: { color: '#1a4d8f', weight: 1, fillColor: '#4a90d9', fillOpacity: 0.35 } });
+    layer.bindPopup(`<strong>${rec.roadsegmentdescription || rec.description || 'Turf strip'}</strong><br/>Surface: ${rec.surfacematerial || 'Turf'}`);
+    turfLayerGroup.addLayer(layer);
     if (rec.geo_point_2d) markCell(rec.geo_point_2d.lat, rec.geo_point_2d.lon, 'turf');
   };
 
-  // GDA94 / MGA zone 55 (Melbourne's local easting/northing grid) -> WGS84 lat/lon.
   proj4.defs('EPSG:28355', '+proj=utm +zone=55 +south +ellps=GRS80 +towgs84=0,0,0,0,0,0,0 +units=m +no_defs');
 
   const addTree = (rec) => {
     const geo = rec.geolocation;
     if (!geo) return;
+    const isPollinating = POLLINATOR_FAMILIES.has(rec.family);
+    const baseFill = isPollinating ? DEFAULT_POLLINATING_FILL : DEFAULT_NONPOLLINATING_FILL;
     const marker = L.circleMarker([geo.lat, geo.lon], {
-      radius: 4, color: '#1b3d10', weight: 1, fillColor: '#2e7d32', fillOpacity: 0.85
-    }).addTo(map);
+      radius: 4, color: '#1b3d10', weight: 1,
+      fillColor: baseFill, fillOpacity: 0.85
+    });
+    marker.baseFill = baseFill;
     marker.bindPopup(`
       <strong>${rec.common_name || 'Tree'}</strong><br/>
       <em>${rec.scientific_name || ''}</em><br/>
       Age: ${rec.age_description || '—'} (planted ${rec.year_planted || '—'})<br/>
-      Trunk diameter: ${rec.diameter_breast_height ?? '—'} cm<br/>
       Located in: ${rec.located_in || '—'} (${rec.precinct || '—'})
     `);
+    treeLayerGroup.addLayer(marker);
 
-    if (POLLINATOR_FAMILIES.has(rec.family)) markCell(geo.lat, geo.lon, 'pollinatorTree');
+    if (isPollinating) {
+      pollinatingTreePoints.push({ lat: geo.lat, lon: geo.lon, name: rec.common_name || 'Tree' });
+      markCell(geo.lat, geo.lon, 'pollinatorTree');
+
+      const key = rec.scientific_name || rec.common_name || 'Unknown species';
+      if (!speciesIndex.has(key)) {
+        speciesIndex.set(key, {
+          commonName: rec.common_name || 'Unnamed tree',
+          scientificName: rec.scientific_name || '',
+          family: rec.family || '',
+          count: 0,
+          markers: []
+        });
+      }
+      const entry = speciesIndex.get(key);
+      entry.count++;
+      entry.markers.push(marker);
+    }
   };
 
-  // Each garden bed (asset_id) is split across multiple API rows: one "location" row
-  // carrying x_coord/y_coord (with form/botanical_name = 'NA'), and one row per plant
-  // species actually growing in that bed (with a real form, but no coordinates). So we
-  // collect all rows per asset_id first, then render one marker per bed once every row
-  // for it has arrived.
-  const gardenBeds = new Map(); // asset_id -> { coord, forms: Set, species: Set, ...meta }
-
+  const gardenBeds = new Map();
   const collectGardenBedRow = (rec) => {
     const id = rec.asset_id;
     if (!gardenBeds.has(id)) gardenBeds.set(id, {
       coord: null, forms: new Set(), species: new Set(),
-      bedType: rec.assessed_bed_type, origin: rec.bed_type_origin,
-      condition: rec.overall_condition_rating, area: rec.area_m2, site: rec.site
+      bedType: rec.assessed_bed_type, condition: rec.overall_condition_rating, area: rec.area_m2, site: rec.site
     });
     const bed = gardenBeds.get(id);
     const x = parseFloat(rec.x_coord), y = parseFloat(rec.y_coord);
     if (isFinite(x) && isFinite(y)) bed.coord = [x, y];
     if (rec.form && rec.form !== 'NA') bed.forms.add(rec.form);
     if (rec.botanical_name && rec.botanical_name !== 'NA') bed.species.add(rec.botanical_name);
-    // Later rows for the same bed may carry meta fields the location row lacked.
     bed.bedType = bed.bedType || rec.assessed_bed_type;
     bed.condition = bed.condition || rec.overall_condition_rating;
     bed.site = bed.site || rec.site;
   };
-
   const renderGardenBeds = () => {
     let rendered = 0;
     gardenBeds.forEach((bed) => {
-      if (!bed.coord) return; // bed has no location row in Carlton's radius query
+      if (!bed.coord) return;
       const [lon, lat] = proj4('EPSG:28355', 'WGS84', bed.coord);
-      const marker = L.circleMarker([lat, lon], {
-        radius: 4, color: '#a17f00', weight: 1, fillColor: '#fbc02d', fillOpacity: 0.85
-      }).addTo(map);
+      const marker = L.circleMarker([lat, lon], { radius: 4, color: '#a17f00', weight: 1, fillColor: '#fbc02d', fillOpacity: 0.85 });
       const speciesList = [...bed.species].join(', ') || 'species not recorded';
       marker.bindPopup(`
         <strong>${bed.bedType || 'Garden bed'}</strong><br/>
@@ -233,70 +651,348 @@
         Condition: ${bed.condition || '—'}<br/>
         Area: ${bed.area || '—'} m² · Site: ${bed.site || '—'}
       `);
-
+      bedLayerGroup.addLayer(marker);
       if ([...bed.forms].some(f => MIDSTORY_FORMS.has(f))) markCell(lat, lon, 'midstory');
       rendered++;
     });
     return rendered;
   };
 
-  const statusEl = document.getElementById('status');
+  const loadingPill = document.getElementById('loadingPill');
   const layerCounts = {};
-
-  const updateStatus = () => {
-    const labels = { turf: 'turf', trees: 'trees', 'gardenbed rows': 'garden bed rows', 'garden beds': 'garden beds' };
-    const parts = Object.keys(layerCounts)
-      .filter(k => layerCounts[k])
-      .map(k => `${layerCounts[k].loaded}/${layerCounts[k].total} ${labels[k]}`);
-    statusEl.textContent = `${parts.join(' · ')} (Carlton, ${RADIUS_METRES}m radius)`;
+  const updateLoadingStatus = () => {
+    const labels = { turf: 'turf', trees: 'trees', 'gardenbed rows': 'garden bed rows' };
+    const parts = Object.keys(layerCounts).filter(k => layerCounts[k]).map(k => `${layerCounts[k].loaded}/${layerCounts[k].total} ${labels[k]}`);
+    loadingPill.textContent = `Loading… ${parts.join(' · ')}`;
   };
 
-  // Generic paginated fetch against any Explore API v2.1 dataset.
   const fetchAll = (dataset, where, key, renderFn, maxRecords = Infinity) => {
     const step = (offset, loaded, total) => {
       const url = `${EXPLORE_BASE}/${dataset}/records?limit=${PAGE_SIZE}&offset=${offset}&where=${encodeURIComponent(where)}`;
       return fetch(url)
-        .then(res => {
-          if (!res.ok) throw new Error(`${dataset}: HTTP ${res.status}`);
-          return res.json();
-        })
+        .then(res => { if (!res.ok) throw new Error(`${dataset}: HTTP ${res.status}`); return res.json(); })
         .then(data => {
           total = data.total_count;
           const records = data.results || [];
           records.forEach(renderFn);
           loaded += records.length;
           layerCounts[key] = { loaded, total };
-          updateStatus();
-
+          updateLoadingStatus();
           const nextOffset = offset + PAGE_SIZE;
-          if (records.length === PAGE_SIZE && loaded < total && loaded < maxRecords) {
-            return step(nextOffset, loaded, total);
-          }
+          if (records.length === PAGE_SIZE && loaded < total && loaded < maxRecords) return step(nextOffset, loaded, total);
         });
     };
     return step(0, 0, 0);
   };
 
+  // =========================================================================
+  // 4. Pollinating species cards — top species by count, with a Wikimedia
+  //    image lookup (no key required) and a pink "highlight this species on
+  //    the map" interaction. The pollination-role / resident-relevance /
+  //    decline-impact copy is template-generated prototype content, not
+  //    sourced from a verified ecological database yet — flagged as such in
+  //    the panel itself.
+  // =========================================================================
+  const SPECIES_CARD_COUNT = 6;
+  const imageCache = new Map(); // scientific name -> image url, or null if none found
+
+  const fetchSpeciesImage = (scientificName) => {
+    if (!scientificName) return Promise.resolve(null);
+    if (imageCache.has(scientificName)) return Promise.resolve(imageCache.get(scientificName));
+    const url = `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(scientificName)}`;
+    return fetch(url)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        const img = data && data.thumbnail && data.thumbnail.source ? data.thumbnail.source : null;
+        imageCache.set(scientificName, img);
+        return img;
+      })
+      .catch(() => { imageCache.set(scientificName, null); return null; });
+  };
+
+  // Curated pollination notes for genera common in Melbourne's street tree
+  // data. Anything outside this list falls back to a generic template built
+  // from the family/common name already in the dataset.
+  const GENUS_NOTES = {
+    Eucalyptus: { role: 'Eucalypts are heavy nectar producers — their flowers open in bursts and can feed bees, lorikeets and honeyeaters for weeks at a time.', resident: 'If you have one on your street, it’s likely one of the biggest single food sources for pollinators in your neighbourhood.' },
+    Corymbia: { role: 'Like other gums, Corymbia flowers produce abundant nectar and pollen favoured by native bees and nectar-feeding birds.', resident: 'A flowering Corymbia nearby can noticeably increase bee and bird activity on your street for weeks.' },
+    Melaleuca: { role: 'Melaleuca’s bottlebrush-style flowers are built for nectar-feeding birds and insects, offering an easy landing platform and exposed nectar.', resident: 'These are common, low-maintenance street and garden trees that punch above their size for pollinator support.' },
+    Callistemon: { role: 'Bottlebrush flowers are a classic nectar source for honeyeaters and native bees, with a long flowering season in many varieties.', resident: 'If you’re planting at home, this genus is one of the most reliable pollinator-attracting choices for a small garden.' },
+    Acacia: { role: 'Wattles flower early in the season, providing one of the first major pollen sources for native bees after winter.', resident: 'A wattle nearby can be an early-season lifeline for pollinators before most other plants have started flowering.' },
+    Lophostemon: { role: 'Brush Box produces small, nectar-rich flowers in summer that attract native bees and beetles.', resident: 'It’s a common, tough street tree in Melbourne that quietly supports pollinators most of the year.' },
+    Tristaniopsis: { role: 'Water Gum flowers are a reliable, if modest, nectar source used by native bees through summer.', resident: 'A frequent footpath tree in Carlton that adds up across a whole street.' }
+  };
+
+  const genusOf = (scientificName) => (scientificName || '').split(' ')[0];
+
+  const buildSpeciesContent = (entry) => {
+    const notes = GENUS_NOTES[genusOf(entry.scientificName)];
+    const role = notes
+      ? notes.role
+      : `${entry.commonName} is recorded here in ${entry.family || 'a pollinator-supporting family'} — one of the tree species contributing food or shelter for local bees, insects and birds.`;
+    const resident = notes
+      ? notes.resident
+      : `If this species is growing near you, it’s part of what makes your street more supportive for pollinators than a street with no flowering trees.`;
+    const drop = `If ${entry.commonName.toLowerCase()} numbers dropped in this area, the pollinators that rely on it would need to travel further to find the same food source — weakening the corridor and making nearby patches more likely to score as Bare or Weak on the Pollination Zones view.`;
+    return { role, resident, drop };
+  };
+
+  let selectedSpeciesKey = null;
+
+  const resetTreeHighlight = () => {
+    treeLayerGroup.eachLayer(marker => marker.setStyle({ fillColor: marker.baseFill, radius: 4 }));
+  };
+
+  const showSpeciesDetail = (entry) => {
+    const panel = document.getElementById('speciesDetail');
+    const content = buildSpeciesContent(entry);
+    const cachedImg = imageCache.get(entry.scientificName);
+    panel.innerHTML = `
+      <button class="detail-close" id="detailClose">✕</button>
+      ${cachedImg ? `<img class="detail-image" src="${cachedImg}" alt="${entry.commonName}" />` : ''}
+      <div class="detail-body">
+        <div class="detail-common">${entry.commonName}</div>
+        <div class="detail-sci">${entry.scientificName || '—'}</div>
+        <div class="detail-block">
+          <h4>Pollination role</h4>
+          <p>${content.role}</p>
+        </div>
+        <div class="detail-block">
+          <h4>Why it matters to you</h4>
+          <p>${content.resident}</p>
+        </div>
+        <div class="detail-block drop">
+          <h4>If numbers dropped</h4>
+          <p>${content.drop}</p>
+        </div>
+        <div class="prototype-tag">Pollination role, resident relevance and decline-impact text is prototype copy for this local build — not yet sourced from a verified species database.</div>
+      </div>
+    `;
+    document.getElementById('detailClose').addEventListener('click', deselectSpecies);
+    panel.classList.add('visible');
+  };
+
+  const hideSpeciesDetail = () => {
+    document.getElementById('speciesDetail').classList.remove('visible');
+  };
+
+  const deselectSpecies = () => {
+    document.querySelectorAll('.species-card.selected').forEach(el => el.classList.remove('selected'));
+    resetTreeHighlight();
+    selectedSpeciesKey = null;
+    hideSpeciesDetail();
+  };
+
+  const toggleSpeciesSelection = (entry, cardEl, key) => {
+    const wasSelected = selectedSpeciesKey === key;
+    deselectSpecies();
+    if (wasSelected) return;
+
+    selectedSpeciesKey = key;
+    cardEl.classList.add('selected');
+    entry.markers.forEach(marker => {
+      marker.setStyle({ fillColor: SPECIES_HIGHLIGHT_FILL, radius: 6 });
+      marker.bringToFront();
+    });
+    showSpeciesDetail(entry);
+  };
+
+  let speciesStripBuilt = false;
+  const renderSpeciesStrip = () => {
+    if (speciesStripBuilt || speciesIndex.size === 0) return;
+    speciesStripBuilt = true;
+
+    const strip = document.getElementById('speciesStrip');
+    const topSpecies = [...speciesIndex.values()].sort((a, b) => b.count - a.count).slice(0, SPECIES_CARD_COUNT);
+
+    strip.innerHTML = topSpecies.map((entry, i) => `
+      <div class="species-card" data-key="${i}">
+        <div class="thumb" id="thumb-${i}"><span class="thumb-fallback">🌳</span></div>
+        <div class="body">
+          <div class="common-name">${entry.commonName}</div>
+          <div class="sci-name">${entry.scientificName || '—'}</div>
+          <div class="count-badge">${entry.count} found nearby</div>
+        </div>
+      </div>
+    `).join('');
+
+    topSpecies.forEach((entry, i) => {
+      const key = entry.scientificName || entry.commonName;
+      const card = strip.querySelector(`.species-card[data-key="${i}"]`);
+      card.addEventListener('click', () => toggleSpeciesSelection(entry, card, key));
+      fetchSpeciesImage(entry.scientificName).then(url => {
+        if (!url) return;
+        const thumb = document.getElementById(`thumb-${i}`);
+        if (thumb) thumb.innerHTML = `<img src="${url}" alt="${entry.commonName}" loading="lazy" />`;
+      });
+    });
+  };
+
+  const updateSpeciesStripVisibility = () => {
+    const strip = document.getElementById('speciesStrip');
+    const shouldShow = activeModeIds.has('plants') && speciesIndex.size > 0;
+    strip.classList.toggle('visible', shouldShow);
+    if (!shouldShow && selectedSpeciesKey) deselectSpecies();
+  };
+
+  // =========================================================================
+  // 5. Corridor Health — frontend-only nearest-neighbour visualisation.
+  //    No gap-detection backend; this is a plain client-side distance
+  //    calculation over the trees already on screen, purely illustrative.
+  // =========================================================================
+  const corridorLayerGroup = L.layerGroup();
+  const renderCorridorHealth = () => {
+    corridorLayerGroup.clearLayers();
+    const MAX_CONNECT_METRES = 150;
+    pollinatingTreePoints.forEach(t => {
+      const marker = L.circleMarker([t.lat, t.lon], { radius: 3, color: '#1b3d10', weight: 1, fillColor: '#2e7d32', fillOpacity: 0.7 });
+      corridorLayerGroup.addLayer(marker);
+    });
+    pollinatingTreePoints.forEach(tree => {
+      let nearest = null, nearestDist = Infinity;
+      pollinatingTreePoints.forEach(other => {
+        if (other === tree) return;
+        const d = map.distance([tree.lat, tree.lon], [other.lat, other.lon]);
+        if (d < nearestDist) { nearestDist = d; nearest = other; }
+      });
+      if (!nearest || nearestDist > MAX_CONNECT_METRES) return;
+      const color = nearestDist <= 25 ? '#43a047' : nearestDist <= 60 ? '#ffa726' : '#e53935';
+      const line = L.polyline([[tree.lat, tree.lon], [nearest.lat, nearest.lon]], { color, weight: 2, dashArray: '5 5', opacity: 0.75 });
+      corridorLayerGroup.addLayer(line);
+    });
+  };
+
+  // =========================================================================
+  // 6. Tile bar / mode switching
+  // =========================================================================
+  const MODES = [
+    {
+      id: 'plants', icon: '🌳', title: 'Pollinating Plants & Trees',
+      sub: 'Trees and garden beds recorded nearby',
+      legendTitle: 'Pollinating Plants & Trees',
+      legendText: 'Trees and garden beds within 1km. Green markers are pollinator-friendly species; brown markers are other trees.',
+      legend: [
+        { color: '#2e7d32', label: 'Pollinator-friendly tree' },
+        { color: '#8d6e63', label: 'Other tree' },
+        { color: '#fbc02d', label: 'Garden bed' },
+        { color: '#ff2f92', label: 'Selected species (from a card below)' }
+      ],
+      legendNote: 'Scroll the species cards at the bottom of the map and select one to highlight it in pink.',
+      layers: () => [treeLayerGroup, bedLayerGroup]
+    },
+    {
+      id: 'animals', icon: '🐝', title: 'Pollinating Animals',
+      sub: 'Insects and birds recorded nearby',
+      legendTitle: 'Pollinating Animals',
+      legendText: 'On the live Habitune platform this screen shows real pollinator sightings from the biodiversity atlas. This local prototype has no atlas connection, so it stays a placeholder.',
+      legend: [],
+      layers: () => [],
+      placeholder: true
+    },
+    {
+      id: 'corridor', icon: '🌿', title: 'Pollination Corridor Health',
+      sub: 'Approximate tree-to-tree gap lines',
+      legendTitle: 'Pollination Corridor Health',
+      legendText: 'Each pollinator-friendly tree is connected to its nearest neighbour. Colour shows roughly how close that connection is.',
+      legend: [
+        { color: '#43a047', label: 'Close (≤25m)' },
+        { color: '#ffa726', label: 'Moderate gap (25–60m)' },
+        { color: '#e53935', label: 'Large gap (60m+)' }
+      ],
+      legendNote: 'Illustrative only — a simple nearest-neighbour distance check, not a validated ecological corridor analysis.',
+      layers: () => { renderCorridorHealth(); return [corridorLayerGroup]; }
+    },
+    {
+      id: 'zones', icon: '🗺️', title: 'Pollination Zones',
+      sub: 'Patch health across the area',
+      legendTitle: 'Pollination Zones',
+      legendText: 'Each 100m cell is scored on how many pollinator-supporting layers (tree, garden bed, turf) are nearby.',
+      legend: ZONE_TIERS.map(t => ({ color: t.color, label: t.name, square: true })),
+      layers: () => { renderZoneGrid(); return [turfLayerGroup, zoneLayerGroup]; }
+    }
+  ];
+
+  const activeModeIds = new Set();
+  const tileBar = document.getElementById('tileBar');
+  const legendPanel = document.getElementById('legendPanel');
+  const nudge = document.getElementById('nudge');
+  const emptyState = document.getElementById('emptyState');
+
+  MODES.forEach(mode => {
+    const tile = document.createElement('div');
+    tile.className = 'tile';
+    tile.dataset.modeId = mode.id;
+    tile.innerHTML = `
+      <div class="tile-top"><span class="tile-icon">${mode.icon}</span><span class="tile-title">${mode.title}</span></div>
+      <div class="tile-sub">${mode.sub}</div>
+      <div class="tile-status">Tap to add</div>
+    `;
+    tile.addEventListener('click', () => toggleMode(mode.id));
+    tileBar.appendChild(tile);
+  });
+
+  const allDynamicLayers = [treeLayerGroup, bedLayerGroup, turfLayerGroup, zoneLayerGroup, corridorLayerGroup];
+
+  function toggleMode(modeId) {
+    if (activeModeIds.has(modeId)) activeModeIds.delete(modeId);
+    else activeModeIds.add(modeId);
+    renderActiveModes();
+  }
+
+  function renderActiveModes() {
+    const active = MODES.filter(m => activeModeIds.has(m.id));
+
+    nudge.classList.toggle('hidden', active.length > 0);
+    emptyState.classList.toggle('hidden', active.length > 0);
+
+    allDynamicLayers.forEach(l => map.removeLayer(l));
+    active.forEach(mode => mode.layers().forEach(l => l.addTo(map)));
+
+    document.querySelectorAll('.tile').forEach(t => {
+      const isActive = activeModeIds.has(t.dataset.modeId);
+      t.classList.toggle('active', isActive);
+      t.querySelector('.tile-status').textContent = isActive ? 'Showing on map — tap to remove' : 'Tap to add';
+    });
+
+    updateSpeciesStripVisibility();
+
+    if (active.length === 0) {
+      legendPanel.classList.remove('visible');
+      legendPanel.innerHTML = '';
+      return;
+    }
+
+    legendPanel.classList.add('visible');
+    legendPanel.innerHTML = active.map(mode => {
+      let html = `<div class="legend-section"><h3>${mode.legendTitle}</h3><p>${mode.legendText}</p>`;
+      mode.legend.forEach(item => {
+        html += `<div class="legend-row"><span class="legend-swatch${item.square ? ' square' : ''}" style="background:${item.color}"></span><span>${item.label}</span></div>`;
+      });
+      if (mode.legendNote) html += `<div class="legend-note">${mode.legendNote}</div>`;
+      if (mode.placeholder) html += `<div class="legend-note">This is a placeholder screen — no live data in this local prototype.</div>`;
+      html += `</div>`;
+      return html;
+    }).join('');
+  }
+
+  // =========================================================================
+  // 7. Kick off data load
+  // =========================================================================
   Promise.all([
-    // Only Turf-surfaced segments, in blue (all other surface types removed).
-    fetchAll('road-segments-with-surface-type', `surfacematerial='Turf' and ${withinCarlton('geo_point_2d')}`,
-      'turf', (rec) => addPolygon(rec, { color: '#1a4d8f', weight: 1, fillColor: '#4a90d9', fillOpacity: 0.5 })),
-    // Urban forest trees, as points.
-    fetchAll('trees-with-species-and-dimensions-urban-forest', withinCarlton('geolocation'),
-      'trees', addTree),
-    // Garden beds: fetch every row for Carlton (not just ones with coordinates) since
-    // a bed's location and its planted species live on different rows joined by asset_id.
-    fetchAll('renewals-for-nature-city-of-melbourne-garden-bed-inventory-2024',
-      `neighbourhood='Carlton'`, 'gardenbed rows', collectGardenBedRow)
+    fetchAll('road-segments-with-surface-type', `surfacematerial='Turf' and ${withinCarlton('geo_point_2d')}`, 'turf', addTurfSegment),
+    fetchAll('trees-with-species-and-dimensions-urban-forest', withinCarlton('geolocation'), 'trees', addTree),
+    fetchAll('renewals-for-nature-city-of-melbourne-garden-bed-inventory-2024', `neighbourhood='Carlton'`, 'gardenbed rows', collectGardenBedRow)
   ]).then(() => {
-    const bedCount = renderGardenBeds();
-    layerCounts['garden beds'] = { loaded: bedCount, total: bedCount };
-    updateStatus();
-    renderGrid();
+    renderGardenBeds();
+    renderSpeciesStrip();
+    updateSpeciesStripVisibility();
+    loadingPill.classList.add('hidden');
+    if (activeModeIds.size === 0) emptyState.classList.remove('hidden');
   }).catch(err => {
-    statusEl.textContent = 'Failed to load: ' + err.message;
+    loadingPill.textContent = 'Failed to load: ' + err.message;
     console.error(err);
   });
+})();
 </script>
 
 </body>
